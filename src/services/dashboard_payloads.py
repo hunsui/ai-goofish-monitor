@@ -11,7 +11,7 @@ from src.services.price_history_service import parse_price_value
 from src.services.result_file_service import (
     normalize_keyword_from_filename,
 )
-from src.services.result_storage_service import load_result_summary
+from src.services.result_storage_service import aggregate_result_file_stats
 
 
 def normalize_text(value: str | None) -> str:
@@ -228,7 +228,7 @@ async def summarize_result_file(
     filename: str,
     task_lookup: dict[str, Task],
 ) -> tuple[dict[str, Any] | None, list[dict[str, Any]], datetime | None]:
-    metrics = await load_result_summary(filename)
+    metrics = await aggregate_result_file_stats(filename)
     if not metrics:
         return None, [], None
 

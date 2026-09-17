@@ -1,0 +1,11 @@
+# 本地构建并运行你 fork 的代码（覆盖上游默认拉取行为）
+# 默认 docker-compose.yaml 是 image: ghcr.io/usagi-org/ai-goofish:latest + pull_policy: always
+# 即 docker compose up 会直接拉【上游已封存】镜像，不含你在本仓库的修复。
+# 本 override 改为从本地源码构建镜像，且永不拉取上游。
+services:
+  app:
+    image: ai-goofish-local:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    pull_policy: build

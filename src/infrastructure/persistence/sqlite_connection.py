@@ -14,6 +14,8 @@ from src.infrastructure.persistence.storage_names import DEFAULT_DATABASE_PATH
 
 BUSY_TIMEOUT_MS = 5000
 
+_MIGRATION_CHECKED = False
+
 SCHEMA_STATEMENTS = (
     """
     CREATE TABLE IF NOT EXISTS app_metadata (
@@ -148,6 +150,10 @@ def init_schema(conn: sqlite3.Connection) -> None:
 
 def _migrate_result_items_status(conn: sqlite3.Connection) -> None:
     """为 result_items 表添加 status 列（仅执行一次）。"""
+    global _MIGRATION_CHECKED
+    if _MIGRATION_CHECKED:
+        return
+    _MIGRATION_CHECKED = True
     row = conn.execute(
         "SELECT value FROM app_metadata WHERE key = 'migration:result_items_status'"
     ).fetchone()

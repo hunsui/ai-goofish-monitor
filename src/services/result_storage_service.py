@@ -289,18 +289,37 @@ def _query_result_records_sync(
 ) -> tuple[int, list[dict]]:
     bootstrap_sqlite_storage()
     offset = max(page - 1, 0) * limit
+    where_clause, params = _build_query_conditions(
+        filename=filename,
+        ai_recommended_only=ai_recommended_only,
+        keyword_recommended_only=keyword_recommended_only,
+    )
+    if not include_hidden:
+        where_clause += " AND status = 'active'"
+    order_clause = _sort_expression(sort_by, sort_order)
     with sqlite_connection() as conn:
-        records = _load_filtered_records_from_conn(
-            conn,
-            filename=filename,
-            ai_recommended_only=ai_recommended_only,
-            keyword_recommended_only=keyword_recommended_only,
-            sort_by=sort_by,
-            sort_order=sort_order,
-            include_hidden=include_hidden,
-        )
-    total = len(records)
-    return total, records[offset: offset + limit]
+        total_row = conn.execute(
+            f"SELECT COUNT(*) AS total FROM result_items WHERE {where_clause}",
+            tuple(params),
+        ).fetchone()
+        total = int(total_row["total"])
+        rows = conn.execute(
+            f"""
+            SELECT raw_json, status
+            FROM result_items
+            WHERE {where_clause}
+            ORDER BY {order_clause}
+            LIMIT ? OFFSET ?
+            """,
+            tuple(params) + (limit, offset),
+        ).fetchall()
+        blacklist_keywords = _load_blacklist_keywords_from_conn(conn, filename)
+    records: list[dict] = []
+    for row in rows:
+        record = _parse_raw_record(str(row["raw_json"]), status=row["status"])
+        decorated = _decorate_record_visibility(record, row["status"], blacklist_keywords)
+        records.append(decorated)
+    return total, records
 
 
 async def load_all_result_records(
@@ -402,6 +421,68 @@ def _load_result_summary_sync(filename: str) -> dict | None:
     }
 
 
+async def aggregate_result_file_stats(filename: str) -> dict | None:
+    """轻量聚合单个结果文件的统计指标，避免加载全部 raw_json。
+
+    返回 total_items / recommended_items / ai_recommended_items /
+    keyword_recommended_items / latest_crawl_time / latest_record /
+    latest_recommendation。仅统计 status='active' 的行；latest_record 取最近一条，
+    latest_recommendation 取最近一条被推荐的行。黑名单隐藏的行不计入（dashboard 仅展示计数，影响极小）。
+    """
+    return await asyncio.to_thread(_aggregate_result_file_stats_sync, filename)
+
+
+def _aggregate_result_file_stats_sync(filename: str) -> dict | None:
+    bootstrap_sqlite_storage()
+    with sqlite_connection() as conn:
+        stats = conn.execute(
+            """
+            SELECT
+                COUNT(*) AS total_items,
+                SUM(CASE WHEN is_recommended = 1 AND analysis_source = 'ai' THEN 1 ELSE 0 END) AS ai_recommended_items,
+                SUM(CASE WHEN is_recommended = 1 AND analysis_source = 'keyword' THEN 1 ELSE 0 END) AS keyword_recommended_items,
+                SUM(is_recommended) AS recommended_items,
+                MAX(crawl_time) AS latest_crawl_time
+            FROM result_items
+            WHERE result_filename = ? AND status = 'active'
+            """,
+            (filename,),
+        ).fetchone()
+        if not stats or int(stats["total_items"]) == 0:
+            return None
+        latest_row = conn.execute(
+            """
+            SELECT raw_json FROM result_items
+            WHERE result_filename = ? AND status = 'active'
+            ORDER BY crawl_time DESC, id DESC
+            LIMIT 1
+            """,
+            (filename,),
+        ).fetchone()
+        latest_recommendation_row = conn.execute(
+            """
+            SELECT raw_json FROM result_items
+            WHERE result_filename = ? AND status = 'active' AND is_recommended = 1
+            ORDER BY crawl_time DESC, id DESC
+            LIMIT 1
+            """,
+            (filename,),
+        ).fetchone()
+    return {
+        "total_items": int(stats["total_items"]),
+        "recommended_items": int(stats["recommended_items"] or 0),
+        "ai_recommended_items": int(stats["ai_recommended_items"] or 0),
+        "keyword_recommended_items": int(stats["keyword_recommended_items"] or 0),
+        "latest_crawl_time": stats["latest_crawl_time"],
+        "latest_record": _parse_raw_record(str(latest_row["raw_json"])) if latest_row else None,
+        "latest_recommendation": (
+            _parse_raw_record(str(latest_recommendation_row["raw_json"]))
+            if latest_recommendation_row
+            else None
+        ),
+    }
+
+
 async def update_item_status(filename: str, item_id: str, status: str) -> bool:
     valid = {"active", "hidden", "expired"}
     if status not in valid:
@@ -455,21 +536,20 @@ def _save_result_blacklist_keywords_sync(filename: str, keywords: list[str]) -> 
 
 
 def load_visible_result_item_ids(filename: str) -> set[str]:
+    """仅取 status='active' 行的 item_id，用于价格走势上下文。
+
+    注意：此处不再按黑名单规则排除（价格走势仅作市场参考），以避免为每条结果加载并解析完整 raw_json。
+    这样结果页/洞察接口不再因价格富化而全量读取数据。
+    """
     bootstrap_sqlite_storage()
     with sqlite_connection() as conn:
-        visible_records = _load_filtered_records_from_conn(
-            conn,
-            filename=filename,
-            ai_recommended_only=False,
-            keyword_recommended_only=False,
-            sort_by="crawl_time",
-            sort_order="desc",
-            include_hidden=False,
-        )
+        rows = conn.execute(
+            "SELECT item_id FROM result_items WHERE result_filename = ? AND status = 'active'",
+            (filename,),
+        ).fetchall()
     item_ids: set[str] = set()
-    for record in visible_records:
-        product = record.get("商品信息", {}) or {}
-        item_id = str(product.get("商品ID") or "").strip()
+    for row in rows:
+        item_id = str(row["item_id"] or "").strip()
         if item_id:
             item_ids.add(item_id)
     return item_ids
