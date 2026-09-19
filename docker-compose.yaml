@@ -1,6 +1,6 @@
 services:
   app:
-    image: ${APP_IMAGE:-docker.io/hunsui/ai-xianyu-monitor:latest}
+    image: ${APP_IMAGE:-ghcr.io/hunsui/ai-xianyu-monitor:latest}
     container_name: ai-xianyu-monitor-app
     pull_policy: if_not_present
     init: true

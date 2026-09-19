@@ -26,7 +26,7 @@
 ## 🐳 Docker 部署（推荐）
 
 ```bash
-git clone https://github.com/hunsui/ai-xianyu-monitor && cd ai-goofish-monitor
+git clone https://github.com/hunsui/ai-goofish-monitor && cd ai-goofish-monitor
 cp .env.example .env
 vim .env # 填写相关配置项
 docker compose up -d
@@ -34,18 +34,27 @@ docker compose logs -f app
 docker compose down
 ```
 
-如果镜像无法访问或下载速度慢，可尝试使用加速：
+镜像由 GitHub Actions 在每次提交后自动构建发布：
+
+| 镜像仓库 | 地址 | 状态 |
+| --- | --- | --- |
+| GitHub Container Registry | `ghcr.io/hunsui/ai-xianyu-monitor:latest` | 默认使用，自动发布 |
+| Docker Hub | `docker.io/hunsui/ai-xianyu-monitor:latest` | 需在仓库 Secrets 配置 `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN` 后才会推送 |
+
+切换到 Docker Hub 镜像：
 ```bash
+APP_IMAGE=docker.io/hunsui/ai-xianyu-monitor:latest docker compose up -d
+```
 
-docker pull ghcr.nju.edu.cn/usagi-org/ai-goofish:latest
-docker tag ghcr.nju.edu.cn/usagi-org/ai-goofish:latest ghcr.io/usagi-org/ai-goofish:latest
+如果 ghcr.io 下载慢，可用南京大学镜像加速：
+```bash
+docker pull ghcr.nju.edu.cn/hunsui/ai-xianyu-monitor:latest
+docker tag ghcr.nju.edu.cn/hunsui/ai-xianyu-monitor:latest ghcr.io/hunsui/ai-xianyu-monitor:latest
 docker compose up -d
-
 ```
 
 - 默认 Web UI 地址：`http://127.0.0.1:8000`
 - Docker 镜像已内置 Chromium，无需宿主机额外安装浏览器。
-- 官方镜像地址：`docker.io/hunsui/ai-xianyu-monitor:latest`
 - 更新镜像：`docker compose pull && docker compose up -d`
 - 如果你修改了 `.env` 中的 `SERVER_PORT`，请同步更新 `docker-compose.yaml` 里的端口映射。
 - `docker-compose.yaml` 默认会把 SQLite 主库挂载到 `./data:/app/data`，数据库文件默认为 `data/app.sqlite3`
