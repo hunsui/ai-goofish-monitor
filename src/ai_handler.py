@@ -239,8 +239,9 @@ def encode_image_to_base64(image_path):
 
 def validate_ai_response_format(parsed_response):
     """验证AI响应的格式是否符合预期结构"""
+    # 注意：prompt_version 仅为提示版本标注，不参与任何业务逻辑，
+    # 模型在长 JSON 输出时会偶发省略该字段，故不作为必需字段强制校验。
     required_fields = [
-        "prompt_version",
         "is_recommended",
         "reason",
         "risk_tags",
@@ -252,6 +253,9 @@ def validate_ai_response_format(parsed_response):
         if field not in parsed_response:
             safe_print(f"   [AI分析] 警告：响应缺少必需字段 '{field}'")
             return False
+
+    # 缺失 prompt_version 时补默认值，避免下游（如有）取到 None
+    parsed_response.setdefault("prompt_version", "unknown")
 
     # 检查criteria_analysis是否为字典且不为空
     criteria_analysis = parsed_response.get("criteria_analysis", {})

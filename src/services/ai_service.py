@@ -47,8 +47,9 @@ class AIAnalysisService:
 
     def _validate_result(self, result: Dict) -> bool:
         """验证 AI 分析结果的格式"""
+        # 注意：prompt_version 仅为提示版本标注，不参与任何业务逻辑，
+        # 模型在长 JSON 输出时会偶发省略该字段，故不作为必需字段强制校验。
         required_fields = [
-            "prompt_version",
             "is_recommended",
             "reason",
             "risk_tags",
@@ -60,6 +61,9 @@ class AIAnalysisService:
             if field not in result:
                 print(f"AI 响应缺少必需字段: {field}")
                 return False
+
+        # 缺失 prompt_version 时补默认值，避免下游（如有）取到 None
+        result.setdefault("prompt_version", "unknown")
 
         # 检查数据类型
         if not isinstance(result.get("is_recommended"), bool):
