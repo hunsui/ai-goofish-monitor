@@ -8,6 +8,9 @@ on:
 
 env:
   IMAGE_NAME: ai-xianyu-monitor
+  # 承接仓库 Secrets；未配置时为空字符串，DockerHub 步骤会自动跳过
+  DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+  DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
 
 jobs:
   build-and-push:
@@ -23,16 +26,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # DockerHub：需要仓库 Secrets DOCKERHUB_USERNAME / DOCKERHUB_TOKEN
-      # 未配置时自动跳过，不影响 ghcr.io 推送
-      - name: Login to DockerHub
-        if: ${{ secrets.DOCKERHUB_TOKEN != '' }}
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      # ghcr.io：使用内置 GITHUB_TOKEN，无需任何配置
+      # ghcr.io：使用内置 GITHUB_TOKEN，无需任何额外配置
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v3
         with:
@@ -40,19 +34,17 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata
+      - name: Extract metadata (ghcr.io)
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: |
-            ${{ secrets.DOCKERHUB_USERNAME && format('{0}/{1}', secrets.DOCKERHUB_USERNAME, env.IMAGE_NAME) || format('ghcr.io/{0}/{1}', github.repository_owner, env.IMAGE_NAME) }}
-            ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}
+          images: ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,format=short
             type=ref,event=tag
 
-      - name: Build and push
+      - name: Build and push to ghcr.io
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -63,3 +55,16 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # DockerHub：需仓库 Secrets 中已配置 DOCKERHUB_USERNAME / DOCKERHUB_TOKEN
+      - name: Push to DockerHub
+        if: env.DOCKERHUB_USERNAME != '' && env.DOCKERHUB_TOKEN != ''
+        run: |
+          echo "${DOCKERHUB_TOKEN}" | docker login -u "${DOCKERHUB_USERNAME}" --password-stdin
+          SRC="ghcr.io/${GITHUB_REPOSITORY_OWNER}/${IMAGE_NAME}"
+          SHORT_SHA="$(echo "${GITHUB_SHA}" | cut -c1-7)"
+          docker pull "${SRC}:latest"
+          docker tag "${SRC}:latest" "${DOCKERHUB_USERNAME}/${IMAGE_NAME}:latest"
+          docker tag "${SRC}:latest" "${DOCKERHUB_USERNAME}/${IMAGE_NAME}:${SHORT_SHA}"
+          docker push "${DOCKERHUB_USERNAME}/${IMAGE_NAME}:latest"
+          docker push "${DOCKERHUB_USERNAME}/${IMAGE_NAME}:${SHORT_SHA}"
