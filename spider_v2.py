@@ -6,6 +6,28 @@ import json
 import signal
 import contextlib
 import re
+from datetime import datetime
+
+import builtins as _builtins
+
+_original_print = _builtins.print
+_TS_FMT = "%Y-%m-%d %H:%M:%S"
+
+
+def _ts_print(*args, **kwargs):
+    # 已带 "[ YYYY-MM-DD HH:MM:SS]" 步骤前缀的日志不重复加时间戳
+    if args:
+        first = str(args[0])
+        if first.startswith("[ ") and len(first) >= 22 and first[21:23] == ":":
+            _original_print(*args, **kwargs)
+            return
+        new_args = (f"[{datetime.now():{_TS_FMT}}] " + first,) + args[1:]
+    else:
+        new_args = args
+    _original_print(*new_args, **kwargs)
+
+
+_builtins.print = _ts_print
 
 from src.config import STATE_FILE
 from src.infrastructure.persistence.sqlite_task_repository import SqliteTaskRepository

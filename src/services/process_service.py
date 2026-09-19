@@ -139,7 +139,7 @@ class ProcessService:
 
         decision = self.failure_guard.should_skip_start(
             task_name,
-            cookie_path=self._resolve_cookie_path(task_name),
+            cookie_path=await asyncio.to_thread(self._resolve_cookie_path, task_name),
         )
         if decision.skip:
             await self._notify_skip(task_name, decision)

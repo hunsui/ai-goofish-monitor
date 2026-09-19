@@ -1,8 +1,8 @@
 services:
   app:
-    image: ${APP_IMAGE:-ghcr.io/usagi-org/ai-goofish:latest}
-    container_name: ai-goofish-monitor-app
-    pull_policy: always
+    image: ${APP_IMAGE:-docker.io/hunsui/ai-xianyu-monitor:latest}
+    container_name: ai-xianyu-monitor-app
+    pull_policy: if_not_present
     init: true
     ports:
       - "8000:8000"

@@ -67,7 +67,10 @@ class SchedulerService:
                         args=[task.id, task.task_name],
                         id=f"task_{task.id}",
                         name=f"Scheduled: {task.task_name}",
-                        replace_existing=True
+                        misfire_grace_time=None,
+                        coalesce=True,
+                        max_instances=1,
+                        replace_existing=True,
                     )
                     print(f"  -> 已为任务 '{task.task_name}' 添加定时规则: '{task.cron}'")
                 except ValueError as e:
@@ -77,5 +80,5 @@ class SchedulerService:
 
     async def _run_task(self, task_id: int, task_name: str):
         """执行定时任务"""
-        print(f"定时任务触发: 正在为任务 '{task_name}' 启动爬虫...")
+        print(f"[{datetime.now():%Y-%m-%d %H:%M:%S}] 定时任务触发: 正在为任务 '{task_name}' 启动爬虫...")
         await self.process_service.start_task(task_id, task_name)
