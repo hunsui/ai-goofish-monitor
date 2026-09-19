@@ -28,7 +28,7 @@
 ## 部署
 
 ```bash
-git clone https://github.com/hunsui/ai-xianyu-monitor && cd ai-xianyu-monitor
+git clone https://github.com/hunsui/ai-goofish-monitor && cd ai-goofish-monitor
 cp .env.example .env   # 按需填写配置
 docker compose up -d   # 默认拉取 docker.io/hunsui/ai-xianyu-monitor:latest
 ```

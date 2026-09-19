@@ -132,7 +132,7 @@ docker compose up -d
 - Chrome / Edge 浏览器（Linux 环境也可使用 Chromium；`start.sh` 会先检查浏览器是否存在）
 
 ```bash
-git clone https://github.com/hunsui/ai-xianyu-monitor
+git clone https://github.com/hunsui/ai-goofish-monitor
 cd ai-goofish-monitor
 cp .env.example .env
 ```
