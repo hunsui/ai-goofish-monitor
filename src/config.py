@@ -47,6 +47,18 @@ SKIP_AI_ANALYSIS = os.getenv("SKIP_AI_ANALYSIS", "false").lower() == "true"
 ENABLE_THINKING = os.getenv("ENABLE_THINKING", "false").lower() == "true"
 ENABLE_RESPONSE_FORMAT = os.getenv("ENABLE_RESPONSE_FORMAT", "true").lower() == "true"
 
+# 单次 AI 分析请求的最大输出 token 预算。
+#
+# 重要：对 deepseek-v4 这类**推理模型**，该额度由「思维链(reasoning) + 正文(content)」共享，
+# 思维链会先吃掉大部分预算。实测（商汤 token.sensenova.cn / deepseek-v4-flash）：
+#   max_tokens=4000  -> reasoning_tokens=4000, content 为空
+#   max_tokens=8000  -> reasoning_tokens=8000, content 为空
+#   max_tokens=16000 -> reasoning_tokens=14184, content 正常输出
+# 原值 4000 会让正文写到一半被截断，JSON 残缺后触发格式校验失败
+# （表现为「响应缺少必需字段 'is_recommended'」），且不同次思维链长短不同，
+# 导致「有时失败有时成功」的随机现象。故默认放宽到 16000。
+AI_MAX_OUTPUT_TOKENS = int(os.getenv("AI_MAX_OUTPUT_TOKENS", "16000"))
+
 # --- Headers ---
 IMAGE_DOWNLOAD_HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:139.0) Gecko/20100101 Firefox/139.0',

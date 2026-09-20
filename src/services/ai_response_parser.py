@@ -101,7 +101,30 @@ def _extract_first_json_value(
     content: str,
     fallback_error: json.JSONDecodeError,
 ):
+    """整体解析失败时，尝试定位文本中的 JSON 值。
+
+    两种情况必须区分对待：
+
+    1. 文本以 JSON 起始符开头（模型直接给 JSON，或给了多个拼接的 JSON 对象）：
+       只接受**从开头就能解析成功**的结果。若开头解析失败，说明这份 JSON 本身
+       残缺——典型原因是输出被 max_tokens 截断。
+       此时**绝不能**退而求其次去解析内层片段：那会把残缺 JSON 的某个子对象
+       （例如 criteria_analysis 里的嵌套对象）当成顶层结果返回，制造出
+       「响应缺少必需字段 'is_recommended'」的假象，把「截断」误报成「模型漏字段」，
+       既误导排查方向，也白白浪费重试次数。
+
+    2. 文本以说明性文字开头（模型在 JSON 前后加了额外文字）：
+       跳过前缀，寻找第一个能完整解析的 JSON 值。
+    """
     decoder = json.JSONDecoder()
+    stripped = content.lstrip()
+
+    if stripped[:1] in "{[":
+        # 开头即 JSON：成功就用它（兼容多个 JSON 对象拼接，raw_decode 会取第一个），
+        # 失败则如实抛出——这是截断，不是「字段缺失」。
+        parsed, _ = decoder.raw_decode(stripped)
+        return parsed
+
     last_error: json.JSONDecodeError | None = None
 
     for start_index, char in enumerate(content):

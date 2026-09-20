@@ -19,6 +19,7 @@ if sys.platform.startswith('win'):
 
 from src.config import (
     AI_DEBUG_MODE,
+    AI_MAX_OUTPUT_TOKENS,
     IMAGE_DOWNLOAD_HEADERS,
     IMAGE_SAVE_DIR,
     TASK_IMAGE_DIR_PREFIX,
@@ -389,7 +390,7 @@ async def get_ai_analysis(product_data, image_paths=None, prompt_text=""):
                 model=MODEL_NAME,
                 messages=messages,
                 temperature=current_temperature,
-                max_output_tokens=4000,
+                max_output_tokens=AI_MAX_OUTPUT_TOKENS,
                 enable_json_output=use_response_format,
             )
             if not use_temperature:
