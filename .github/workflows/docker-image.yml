@@ -1,10 +1,11 @@
-name: Docker Image CI on merge to master
+name: Docker Image CI (upstream, manual only)
 
+# 上游自带的镜像构建流程，已在本 fork 中停用自动触发（保留文件以便同步上游）。
+# 原因：本仓库镜像由自建的 docker-publish.yml 负责（ghcr.io/hunsui/ai-xianyu-monitor）；
+#       本流程产出的是 ai-goofish / ai-goofish-base 多架构镜像，非本 fork 所需且耗时。
+# 如需运行，请在 Actions 页面手动触发。
 on:
   workflow_dispatch:
-  pull_request:
-    types: [closed]
-    branches: ["master"]
 
 env:
   IMAGE_NAME: ai-goofish
