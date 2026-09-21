@@ -124,6 +124,34 @@ SCHEMA_STATEMENTS = (
     CREATE INDEX IF NOT EXISTS idx_snapshots_keyword_item_time
     ON price_snapshots(keyword_slug, item_id, snapshot_time DESC)
     """,
+    # 覆盖索引：`load_price_snapshots` 按 (keyword_slug, snapshot_time, id) 排序，
+    # 只取 item_id / price / run_id / snapshot_time / snapshot_day 五列。
+    # 索引列顺序与 ORDER BY 一致，且包含全部投影列 → 变为 index-only scan，
+    # 不再回表读取大文本列（tags_json/title/link/...）。
+    # macbook 文件 16697 条快照实测：回表读约 17MB 数据页 → 只读约 1MB 索引页。
+    # 注意：若要给 load_price_snapshots 增加投影列，必须同步加到这个索引末尾，
+    # 否则会退化为回表扫描。
+    """
+    CREATE INDEX IF NOT EXISTS idx_snapshots_read_projection
+    ON price_snapshots(keyword_slug, snapshot_time, id, item_id, price, run_id, snapshot_day)
+    """,
+    # 覆盖索引：result_items 上的所有「按文件 + 可见性」读取都只需要这几列，
+    # 但 result_items 每行都带一个很大的 raw_json（macbook 2136 行合计 19.1MB）。
+    # 现有 idx_results_filename_status_crawl 只含 (result_filename, status, crawl_time)，
+    # 取 item_id / is_recommended / analysis_source 时 SQLite 必须回表 → 把这 19MB
+    # 数据页全读一遍（NAS 冷缓存实测 load_visible_result_item_ids() 需 15.5 秒）。
+    # 本索引把这几列都收进来，使下列查询变为 index-only scan：
+    #   - load_visible_result_item_ids:  WHERE result_filename=? AND status='active' → item_id
+    #   - _aggregate_result_file_stats_sync: COUNT / SUM(is_recommended) /
+    #     SUM(CASE analysis_source) / MAX(crawl_time)
+    #   - _query_result_records_sync 快速路径: ORDER BY crawl_time DESC LIMIT n
+    #     （crawl_time 紧跟等值列之后，索引顺序即可满足排序，省掉临时 B 树）
+    # 实测索引体积约 0.25MB（2865 行），相对省下的 19MB 表页读取可忽略。
+    # 注意：若要给这两处读取增加投影列，必须同步加到这个索引末尾。
+    """
+    CREATE INDEX IF NOT EXISTS idx_results_visible_covering
+    ON result_items(result_filename, status, crawl_time DESC, item_id, is_recommended, analysis_source)
+    """,
 )
 
 

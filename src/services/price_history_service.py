@@ -179,10 +179,18 @@ def record_market_snapshots(
 
 
 def load_price_snapshots(keyword: str) -> list[dict]:
-    """读取某 keyword 的全部价格快照（按 snapshot_time 升序）。
+    """读取某 keyword 的价格快照（按 snapshot_time 升序）。
 
-    带秒级 TTL 进程内缓存，详见 _SNAPSHOT_CACHE 处的说明。
+    带 TTL 进程内缓存，详见 _SNAPSHOT_CACHE 处的说明。
     返回的是缓存里那一份列表本身，调用方**不得就地修改**。
+
+    **只 SELECT 消费方实际使用的列**（item_id / price / run_id / snapshot_time /
+    snapshot_day）。原先的 `SELECT *` 会连带读出 tags_json / title / link / seller /
+    region 等大文本，其中 tags_json 还要逐条 `json.loads`——macbook 文件 16697 条
+    快照即 16697 次解析，纯属浪费。
+    配合 `idx_snapshots_read_projection` 覆盖索引，本查询变为 index-only scan，
+    不再回表读 17MB 数据页。
+    若将来需要 title/link/tags，请显式把它们加回 SELECT 与索引，不要直接改回 `SELECT *`。
     """
     slug = normalize_keyword_slug(keyword)
     if _SNAPSHOT_CACHE_TTL_SECONDS > 0:
@@ -194,7 +202,7 @@ def load_price_snapshots(keyword: str) -> list[dict]:
     with sqlite_connection() as conn:
         rows = conn.execute(
             """
-            SELECT *
+            SELECT item_id, price, run_id, snapshot_time, snapshot_day
             FROM price_snapshots
             WHERE keyword_slug = ?
             ORDER BY snapshot_time ASC, id ASC
@@ -208,17 +216,8 @@ def load_price_snapshots(keyword: str) -> list[dict]:
                 "snapshot_time": row["snapshot_time"],
                 "snapshot_day": row["snapshot_day"],
                 "run_id": row["run_id"],
-                "task_name": row["task_name"],
-                "keyword": row["keyword"],
                 "item_id": row["item_id"],
-                "title": row["title"],
                 "price": row["price"],
-                "price_display": row["price_display"],
-                "tags": json.loads(row["tags_json"] or "[]"),
-                "region": row["region"],
-                "seller": row["seller"],
-                "publish_time": row["publish_time"],
-                "link": row["link"],
             }
         )
     if _SNAPSHOT_CACHE_TTL_SECONDS > 0:
