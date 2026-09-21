@@ -8,7 +8,11 @@ import json
 import threading
 from pathlib import Path
 
-from src.infrastructure.persistence.sqlite_connection import init_schema, sqlite_connection
+from src.infrastructure.persistence.sqlite_connection import (
+    get_database_path,
+    init_schema,
+    sqlite_connection,
+)
 from src.infrastructure.persistence.storage_names import (
     build_result_filename,
     normalize_keyword_from_filename,
@@ -17,6 +21,9 @@ from src.infrastructure.persistence.storage_names import (
 
 
 BOOTSTRAP_LOCK = threading.Lock()
+# 已完成初始化的数据库路径（进程内缓存），避免每次读请求都重跑 DDL。
+_BOOTSTRAPPED_PATHS: set[str] = set()
+
 LEGACY_CONFIG_FILE = "config.json"
 LEGACY_RESULT_DIR = "jsonl"
 LEGACY_PRICE_HISTORY_DIR = "price_history"
@@ -32,12 +39,24 @@ def bootstrap_sqlite_storage(
     legacy_result_dir: str = LEGACY_RESULT_DIR,
     legacy_price_history_dir: str = LEGACY_PRICE_HISTORY_DIR,
 ) -> None:
+    # 进程内只执行一次。
+    #
+    # init_schema 会跑整套 CREATE TABLE/INDEX IF NOT EXISTS 并 commit，而本函数被
+    # 每个读路径调用（单次「结果列表」请求就会触发多次：load_price_snapshots、
+    # load_visible_result_item_ids …）。在低功耗 NAS 上，反复 DDL + fsync 的开销
+    # 可达秒级，是结果页加载慢的主要来源之一。
+    resolved_path = db_path or get_database_path()
+    if resolved_path in _BOOTSTRAPPED_PATHS:
+        return
     with BOOTSTRAP_LOCK:
+        if resolved_path in _BOOTSTRAPPED_PATHS:
+            return
         with sqlite_connection(db_path) as conn:
             init_schema(conn)
             _import_tasks_if_needed(conn, legacy_config_file)
             _import_results_if_needed(conn, legacy_result_dir)
             _import_price_snapshots_if_needed(conn, legacy_price_history_dir)
+        _BOOTSTRAPPED_PATHS.add(resolved_path)
 
 
 def _table_is_empty(conn, table_name: str) -> bool:

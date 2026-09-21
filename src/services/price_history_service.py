@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import time
 from collections import defaultdict
 from datetime import datetime
 from statistics import median
@@ -16,6 +17,26 @@ from src.infrastructure.persistence.sqlite_connection import sqlite_connection
 
 PRICE_HISTORY_DIR = "price_history"
 DEFAULT_HISTORY_WINDOW_DAYS = 30
+
+# 快照读取的进程内短缓存。
+#
+# 结果页一次打开会并发请求多个接口（列表 / insights / blacklist-rules），
+# 每个都会重读该 keyword 的全部快照——NAS 实测 16697 行约 520ms，且 4 核
+# 低功耗 CPU 上会互相抢占。加一层秒级 TTL 让这些请求共享同一份数据。
+#
+# 写入路径（record_market_snapshots / delete_price_snapshots）会主动失效，
+# 因此最大不一致窗口 = TTL。价格走势属趋势数据，秒级延迟可接受。
+# 置 0 可关闭缓存（回退到原行为）。
+_SNAPSHOT_CACHE: dict[str, tuple[float, list[dict]]] = {}
+_SNAPSHOT_CACHE_TTL_SECONDS = float(os.getenv("PRICE_SNAPSHOT_CACHE_TTL", "30"))
+
+
+def invalidate_snapshot_cache(keyword: Optional[str] = None) -> None:
+    """失效快照缓存。keyword 为空时清空全部。"""
+    if keyword is None:
+        _SNAPSHOT_CACHE.clear()
+        return
+    _SNAPSHOT_CACHE.pop(normalize_keyword_slug(keyword), None)
 
 
 def normalize_keyword_slug(keyword: str) -> str:
@@ -153,10 +174,22 @@ def record_market_snapshots(
                 ),
             )
         conn.commit()
+    invalidate_snapshot_cache(keyword)
     return records
 
 
 def load_price_snapshots(keyword: str) -> list[dict]:
+    """读取某 keyword 的全部价格快照（按 snapshot_time 升序）。
+
+    带秒级 TTL 进程内缓存，详见 _SNAPSHOT_CACHE 处的说明。
+    返回的是缓存里那一份列表本身，调用方**不得就地修改**。
+    """
+    slug = normalize_keyword_slug(keyword)
+    if _SNAPSHOT_CACHE_TTL_SECONDS > 0:
+        cached = _SNAPSHOT_CACHE.get(slug)
+        if cached is not None and (time.monotonic() - cached[0]) < _SNAPSHOT_CACHE_TTL_SECONDS:
+            return cached[1]
+
     bootstrap_sqlite_storage()
     with sqlite_connection() as conn:
         rows = conn.execute(
@@ -166,7 +199,7 @@ def load_price_snapshots(keyword: str) -> list[dict]:
             WHERE keyword_slug = ?
             ORDER BY snapshot_time ASC, id ASC
             """,
-            (normalize_keyword_slug(keyword),),
+            (slug,),
         ).fetchall()
     snapshots: list[dict] = []
     for row in rows:
@@ -188,6 +221,8 @@ def load_price_snapshots(keyword: str) -> list[dict]:
                 "link": row["link"],
             }
         )
+    if _SNAPSHOT_CACHE_TTL_SECONDS > 0:
+        _SNAPSHOT_CACHE[slug] = (time.monotonic(), snapshots)
     return snapshots
 
 
@@ -199,6 +234,7 @@ def delete_price_snapshots(keyword: str) -> int:
             (normalize_keyword_slug(keyword),),
         )
         conn.commit()
+    invalidate_snapshot_cache(keyword)
     return int(cursor.rowcount or 0)
 
 
@@ -270,32 +306,59 @@ def _resolve_deal_label(score: int) -> str:
     return "价格偏高"
 
 
+def build_market_context(market_snapshots: Optional[list[dict]]) -> dict:
+    """计算与具体商品无关的市场概览。
+
+    同一批结果里每个商品看到的市场概览完全相同，故单独抽出，
+    供批量富化只计算一次，而不是每条记录都把全量快照重扫一遍。
+    """
+    if not market_snapshots:
+        return {"avg_price": None, "median_price": None}
+    latest_run_id = str(market_snapshots[-1].get("run_id") or "")
+    latest_market = _dedupe_latest(
+        [record for record in market_snapshots if str(record.get("run_id") or "") == latest_run_id],
+        "item_id",
+    )
+    summary = _summarize_prices(latest_market)
+    return {
+        "avg_price": summary.get("avg_price"),
+        "median_price": summary.get("median_price"),
+    }
+
+
 def build_item_price_context(
     snapshots: list[dict],
     *,
     item_id: str,
     current_price: Optional[float],
     market_snapshots: Optional[list[dict]] = None,
+    item_snapshots: Optional[list[dict]] = None,
+    market_context: Optional[dict] = None,
 ) -> dict:
+    """构建单个商品的价格上下文。
+
+    item_snapshots / market_context 为可选的预计算结果：批量场景下由调用方预先
+    算好传入，避免逐条全量扫描快照（复杂度由 O(记录数 × 快照数) 降为 O(快照数)）。
+    不传时行为与原先完全一致。
+    """
     if not item_id:
         return {"observation_count": 0, "deal_score": None, "deal_label": "暂无数据"}
 
-    item_snapshots = [record for record in snapshots if str(record.get("item_id")) == str(item_id)]
+    if item_snapshots is None:
+        item_snapshots = [
+            record for record in snapshots if str(record.get("item_id")) == str(item_id)
+        ]
     if not item_snapshots:
         return {"observation_count": 0, "deal_score": None, "deal_label": "暂无数据"}
 
     latest_item_snapshot = item_snapshots[-1]
     price_now = current_price if current_price is not None else parse_price_value(latest_item_snapshot.get("price"))
     historical_prices = [float(record["price"]) for record in item_snapshots if parse_price_value(record.get("price")) is not None]
-    source_snapshots = market_snapshots if market_snapshots is not None else snapshots
-    latest_run_id = str(source_snapshots[-1].get("run_id") or "") if source_snapshots else ""
-    latest_market = _dedupe_latest(
-        [record for record in source_snapshots if str(record.get("run_id") or "") == latest_run_id],
-        "item_id",
-    )
-    market_summary = _summarize_prices(latest_market)
-    market_avg = market_summary.get("avg_price")
-    market_median = market_summary.get("median_price")
+    if market_context is None:
+        source_snapshots = market_snapshots if market_snapshots is not None else snapshots
+        market_context = build_market_context(source_snapshots)
+    market_avg = market_context.get("avg_price")
+    market_median = market_context.get("median_price")
 
     score = 50
     if price_now is not None and market_avg:
